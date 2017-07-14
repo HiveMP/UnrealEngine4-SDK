@@ -1,0 +1,23 @@
+{
+  "FileVersion": 3,
+
+  "FriendlyName": "Online Subsystem Hive",
+  "Version": 1,
+  "VersionName": "1.0",
+  "Description": "The online subsystem which uses HiveMP.",
+  "Category": "Online Platform",
+  "CreatedBy": "Redpoint Games",
+  "CreatedByURL": "https://hivemp.com",
+  "Modules": [
+    {
+      "Name": "OnlineSubsystemHive",
+      "Type": "Runtime",
+      "LoadingPhase": "Default"
+    }
+  ],
+  "PreBuildSteps": {
+    "Win64": [
+      "\"$(ProjectDir)\\Plugins\\OnlineSubsystemHive\\generate.bat\""
+    ]
+  }
+}

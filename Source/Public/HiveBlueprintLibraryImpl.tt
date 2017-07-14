@@ -1,0 +1,854 @@
+<#@ output extension=".cpp" #>
+<#@ assembly name="System.Core" #>
+<#@ assembly name="Microsoft.CSharp" #>
+<#@ import namespace="System" #>
+<#@ import namespace="System.Collections.Generic" #>
+<#@ import namespace="System.Net" #>
+<#@ import namespace="System.IO" #>
+<#@ import namespace="Newtonsoft.Json" #>
+<#
+var dictionary = new Dictionary<string, WebEntry>
+{
+	{ "Administrative Sessions", new WebEntry("admin-session") },
+	{ "Attributes", new WebEntry("attribute") },
+	{ "Events", new WebEntry("event") },
+	{ "Game Servers", new WebEntry("game-server") },
+	{ "Integrations", new WebEntry("integration") },
+	{ "Game Lobbies", new WebEntry("lobby") },
+	{ "NAT Punchthrough", new WebEntry("nat-punchthrough") },
+	{ "Reporting", new WebEntry("reporting") },
+	{ "Revenue Share", new WebEntry("revenue-share") },
+	{ "Temporary Sessions", new WebEntry("temp-session") },
+	{ "UGC Cache", new WebEntry("ugc-cache") },
+	{ "User Sessions", new WebEntry("user-session") },
+};
+
+var client = new WebClient();
+foreach (var kv in dictionary)
+{
+	if (!File.Exists(kv.Value.ApiName + ".json"))
+	{
+		var url = "https://" + kv.Value.ApiName + "-api.hivemp.com/swagger.json";
+		Console.WriteLine("Fetching " + url + "...");
+		client.DownloadFile(url, kv.Value.ApiName + ".json");
+	}
+
+	var json = string.Join("", File.ReadAllLines(kv.Value.ApiName + ".json"));
+	kv.Value.Api = JsonConvert.DeserializeObject<dynamic>(json);
+}
+
+Func<string, string> StripDefinition = s =>
+{
+	if (s.StartsWith("#/definitions/"))
+	{
+		return s.Substring("#/definitions/".Length);
+	}
+	return s;
+};
+
+Func<string, dynamic, bool, string> GetCPlusPlusTypeFromParameter = null;
+GetCPlusPlusTypeFromParameter = (safeName, parameter, useConst) =>
+{
+	string constName = useConst ? "const " : "";
+	string parameterType = null;
+	try 
+	{
+		if (parameter["type"] != null)
+		{
+			switch ((string)parameter.type)
+			{
+				case "string":
+				{
+					switch ((string)parameter.format)
+					{
+						case "byte":
+							parameterType = "TArray<uint8>";
+							break;
+						default:
+							parameterType = "FString";
+							break;
+					}
+					break;
+				}
+				case "integer":
+				{
+					switch ((string)parameter.format)
+					{
+						case "int32":
+							parameterType = "int32";
+							break;
+						case "int64":
+							// Long is not supported in blueprints.
+							parameterType = "int32";
+							break;
+					}
+					break;
+				}
+				case "number":
+				{
+					switch ((string)parameter.format)
+					{
+						case "float":
+							parameterType = "float";
+							break;
+						case "double":
+							// Double not supported by blueprints.
+							parameterType = "float";
+							break;
+					}
+					break;
+				}
+				case "boolean":
+				{
+					parameterType = "bool";
+					break;
+				}
+				case "object":
+				{
+					parameterType = "FString /* JSON STRING */";
+					break;
+				}
+				case "array":
+				{
+					parameterType = "TArray<" + GetCPlusPlusTypeFromParameter(safeName, parameter["items"], false) + ">";
+					break;
+				}
+			}
+		}
+		else if (parameter["schema"] != null)
+		{
+			if (parameter.schema["type"] == "array")
+			{
+				parameterType = "TArray<" + GetCPlusPlusTypeFromParameter(safeName, parameter.schema["items"], false) + ">";
+			}
+			else if (parameter.schema["$ref"] != null)
+			{
+				parameterType = constName + "FHive" + safeName + "_" + StripDefinition((string)parameter.schema["$ref"]);
+			}
+			else
+			{
+				return GetCPlusPlusTypeFromParameter(safeName, parameter.schema, useConst);
+			}
+		}
+		else if (parameter["$ref"] != null)
+		{
+			parameterType = constName + "FHive" + safeName + "_" + StripDefinition((string)parameter["$ref"]);
+		}
+	}
+	catch (Exception ex)
+	{
+		Console.Error.WriteLine(ex);
+		parameterType = "int32 /* unknown */ ";
+	}
+	return parameterType;
+};
+
+Func<string, dynamic, string> GetDeserializerName = null;
+GetDeserializerName = (safeName, parameter) =>
+{
+	try 
+	{
+		if (parameter["type"] != null)
+		{
+			if (parameter["type"] == "array")
+			{
+				return "array:" + GetDeserializerName(safeName, parameter["items"]);
+			}
+			return null;
+		}
+		else if (parameter["schema"] != null)
+		{
+			if (parameter.schema["type"] == "array")
+			{
+				return "array:" + GetDeserializerName(safeName, parameter.schema["items"]);
+			}
+			else if (parameter.schema["$ref"] != null)
+			{
+				return "DeserializeFHive" + safeName + "_" + StripDefinition((string)parameter.schema["$ref"]);
+			}
+			else
+			{
+				return GetDeserializerName(safeName, parameter.schema);
+			}
+		}
+		else if (parameter["$ref"] != null)
+		{
+			return "DeserializeFHive" + safeName + "_" + StripDefinition((string)parameter["$ref"]);
+		}
+	}
+	catch (Exception ex)
+	{
+		Console.Error.WriteLine(ex);
+		return null;
+	}
+	return null;
+};
+
+#>
+
+#pragma once
+
+#include "HiveBlueprintLibrary.h"
+
+<#
+foreach (var kv in dictionary)
+{
+	var api = kv.Value.Api;
+	var safeName = kv.Value.ApiName.Replace("-", "_");
+	
+	foreach (var def in api.definitions)
+	{
+		if (def.Name == "HiveSystemError")
+		{
+			continue;
+		}
+#>
+
+struct FHive<#=safeName#>_<#=def.Name#> DeserializeFHive<#=safeName#>_<#=def.Name#>(const TSharedPtr<FJsonObject> obj)
+{
+	struct FHive<#=safeName#>_<#=def.Name#> Target;
+	
+<#
+		foreach (var prop in def.Value.properties)
+		{
+			var propType = GetCPlusPlusTypeFromParameter(safeName, prop.Value, false);
+			if (propType != null)
+			{
+				if (propType == "TArray<uint8>")
+				{
+#>
+	FString F_<#=prop.Name#>;
+	if (obj->TryGetStringField(TEXT("<#=prop.Name#>"), F_<#=prop.Name#>))
+	{
+		FBase64::Decode(F_<#=prop.Name#>, Target.<#=prop.Name#>);
+	}
+<#
+				}
+				else if (propType.StartsWith("TArray<"))
+				{
+#>
+	const TArray<TSharedPtr<FJsonValue>>* F_<#=prop.Name#>;
+	if (obj->TryGetArrayField(TEXT("<#=prop.Name#>"), F_<#=prop.Name#>))
+	{
+		for (int i = 0; i < F_<#=prop.Name#>->Num(); i++)
+		{
+<#
+					var subsetPropType = propType.Substring("TArray<".Length);
+					subsetPropType = subsetPropType.Substring(0, subsetPropType.Length - 1);
+					if (subsetPropType.StartsWith("FString"))
+					{
+#>
+			FString A_<#=prop.Name#>;
+			if ((*F_<#=prop.Name#>)[i]->TryGetString(A_<#=prop.Name#>))
+			{
+				Target.<#=prop.Name#>.Add(A_<#=prop.Name#>);
+			}
+<#
+					}
+					else if (subsetPropType.StartsWith("FHive"))
+					{
+						var deserializerName = GetDeserializerName(safeName, prop.Value).Substring("array:".Length);
+						if (deserializerName != null)
+						{
+#>
+			const TSharedPtr<FJsonObject>* A_<#=prop.Name#>;
+			if ((*F_<#=prop.Name#>)[i]->TryGetObject(A_<#=prop.Name#>))
+			{
+				Target.<#=prop.Name#>.Add(<#=deserializerName#>(*A_<#=prop.Name#>));
+			}
+<#
+						}
+					}
+					else if (subsetPropType == "int32" || subsetPropType == "int64" || subsetPropType == "float" || subsetPropType == "double")
+					{
+#>
+			double A_<#=prop.Name#>;
+			if ((*F_<#=prop.Name#>)[i]->TryGetNumber(A_<#=prop.Name#>))
+			{
+				Target.<#=prop.Name#>.Add((<#=subsetPropType#>)A_<#=prop.Name#>);
+			}
+<#
+					}
+					else if (subsetPropType == "bool")
+					{
+#>
+			bool A_<#=prop.Name#>;
+			if ((*F_<#=prop.Name#>)[i]->TryGetBool(A_<#=prop.Name#>))
+			{
+				Target.<#=prop.Name#>.Add(A_<#=prop.Name#>);
+			}
+<#
+					}
+					else
+					{
+#>
+	// Don't know how to handle '<#=subsetPropType??""#>'
+<#
+					}
+#>
+		}
+	}
+<#
+				}
+				else if (propType.StartsWith("FString"))
+				{
+#>
+	FString F_<#=prop.Name#>;
+	if (obj->TryGetStringField(TEXT("<#=prop.Name#>"), F_<#=prop.Name#>))
+	{
+		Target.<#=prop.Name#> = F_<#=prop.Name#>;
+	}
+<#
+				}
+				else if (propType.StartsWith("FHive"))
+				{
+					var deserializerName = GetDeserializerName(safeName, prop.Value);
+					if (deserializerName != null)
+					{
+#>
+	const TSharedPtr<FJsonObject>* F_<#=prop.Name#>;
+	if (obj->TryGetObjectField(TEXT("<#=prop.Name#>"), F_<#=prop.Name#>))
+	{
+		Target.<#=prop.Name#> = <#=deserializerName#>(*F_<#=prop.Name#>);
+	}
+<#
+					}
+				}
+				else if (propType == "int32" || propType == "int64" || propType == "float" || propType == "double")
+				{
+#>
+	double F_<#=prop.Name#>;
+	if (obj->TryGetNumberField(TEXT("<#=prop.Name#>"), F_<#=prop.Name#>))
+	{
+		Target.<#=prop.Name#> = (<#=propType#>)F_<#=prop.Name#>;
+	}
+<#
+				}
+				else if (propType == "bool")
+				{
+#>
+	bool F_<#=prop.Name#>;
+	if (obj->TryGetBoolField(TEXT("<#=prop.Name#>"), F_<#=prop.Name#>))
+	{
+		Target.<#=prop.Name#> = (<#=propType#>)F_<#=prop.Name#>;
+	}
+<#
+				}
+				else
+				{
+#>
+	// Don't know how to handle '<#=propType??""#>' for '<#=prop.Name#>'
+<#
+				}
+			}
+		}
+#>
+
+	return Target;
+}
+
+<#
+	}
+
+	foreach (var path in api.paths)
+	{
+		foreach (var method in path.Value)
+		{
+			try
+			{
+				var operationId = method.Value.operationId ?? "";
+				var tag = method.Value.tags[0];
+				var implName = safeName + "_" + tag + "_" + operationId;
+
+				var onlyError = false;
+				var resultType = "";
+				var deserializerName = "";
+				try 
+				{
+					if (method != null &&
+						method.Value != null &&
+						method.Value["responses"] != null &&
+						method.Value.responses["200"] != null)
+					{
+						var parameterType = GetCPlusPlusTypeFromParameter(safeName, method.Value.responses["200"], false);
+						if (parameterType == null)
+						{
+							onlyError = true;
+						}
+						else
+						{
+							onlyError = false;
+							resultType = parameterType;
+							deserializerName = GetDeserializerName(safeName, method.Value.responses["200"]);
+						}
+					}
+					else
+					{
+						onlyError = true;
+					}
+				}
+				catch (Exception ex)
+				{
+					Console.Error.WriteLine("DURING CALLBACK GENERATION:");
+					Console.Error.WriteLine(ex);
+					onlyError = true;
+				}
+
+				var defaultInitializer = "";
+				if (resultType.StartsWith("FString"))
+				{
+					defaultInitializer = "TEXT(\"\")";
+				}
+				else if (resultType.Contains("FHive"))
+				{
+					defaultInitializer = resultType + "()";
+				}
+				else
+				{
+					defaultInitializer = "0";
+				}
+#>
+
+U<#=implName#>::U<#=implName#>(const FObjectInitializer& ObjectInitializer) : Super(ObjectInitializer), WorldContextObject(nullptr) { }
+
+U<#=implName#>* U<#=implName#>::PerformHiveCall(
+	UObject* WorldContextObject,
+	FString ApiKey
+<#
+				if (method.Value.parameters != null)
+				{
+					foreach (var parameter in method.Value.parameters)
+					{
+						var cppType = GetCPlusPlusTypeFromParameter(safeName, parameter, true);
+#>
+	, <#=cppType#> <#=parameter.name#>
+<#
+					}
+				}
+#>)
+{
+	U<#=implName#>* Proxy = NewObject<U<#=implName#>>();
+
+	Proxy->WorldContextObject = WorldContextObject;
+	Proxy->ApiKey = ApiKey;
+
+	<#
+				if (method.Value.parameters != null)
+				{
+					foreach (var parameter in method.Value.parameters)
+					{
+						var cppType = GetCPlusPlusTypeFromParameter(safeName, parameter, true);
+						if (cppType.Contains("TArray"))
+						{
+#>
+	Proxy->Field_<#=parameter.name#> = <#=cppType#>(<#=parameter.name#>);
+<#
+						}
+						else
+						{
+#>
+	Proxy->Field_<#=parameter.name#> = <#=parameter.name#>;
+<#
+						}
+					}
+				}
+#>
+
+	return Proxy;
+}
+
+void U<#=implName#>::Activate()
+{
+	UE_LOG_HIVE(Display, TEXT("[start] <#=kv.Value.ApiName#> <#=path.Name#> <#=method.Name#>"));
+
+<#
+	var queryStringPlacements = new List<string>();
+	if (method.Value.parameters != null)
+	{
+		foreach (var parameter in method.Value.parameters)
+		{
+			try
+			{
+				if (parameter["in"] == "query")
+				{
+					var cppType = GetCPlusPlusTypeFromParameter(safeName, parameter, true);
+					if (cppType != null)
+					{
+						if (cppType.StartsWith("FString"))
+						{
+							queryStringPlacements.Add((string)(parameter.name + "=%s"));
+						}
+						else if (cppType == "int32")
+						{
+							queryStringPlacements.Add((string)(parameter.name + "=%i"));
+						}
+						else if (cppType == "float")
+						{
+							queryStringPlacements.Add((string)(parameter.name + "=%f"));
+						}
+						else if (cppType == "bool")
+						{
+							// Convert to true / false below
+							queryStringPlacements.Add((string)(parameter.name + "=%s"));
+						}
+						else
+						{
+							// Unknown
+							queryStringPlacements.Add((string)(parameter.name + "=%s"));
+						}
+					}
+					else
+					{
+						// Unknown
+						queryStringPlacements.Add((string)(parameter.name + "=%s"));
+					}
+				}
+			}
+			catch (Exception ex)
+			{
+				Console.Error.WriteLine("ERROR DURING QUERY STRING BUILDING:");
+				Console.Error.WriteLine(ex);
+			}
+		}
+	}
+#>
+	TSharedRef<IHttpRequest> HttpRequest = FHttpModule::Get().CreateRequest();
+	HttpRequest->SetURL(FString::Printf(
+		TEXT("https://<#=kv.Value.ApiName#>-api.hivemp.com<#=kv.Value.Api.basePath#><#=path.Name#>?<#=string.Join("&", queryStringPlacements)#>")
+<#
+	if (method.Value.parameters != null)
+	{
+		foreach (var parameter in method.Value.parameters)
+		{
+			try
+			{
+				if (parameter["in"] == "query")
+				{
+					var cppType = GetCPlusPlusTypeFromParameter(safeName, parameter, true);
+					if (cppType == null)
+					{
+#>
+		, TEXT("")
+<#
+					}
+					else if (cppType.StartsWith("FString"))
+					{
+#>
+		, *FGenericPlatformHttp::UrlEncode(this->Field_<#=parameter.name#>)
+<#
+					}
+					else if (cppType == "bool")
+					{
+#>
+		, *FGenericPlatformHttp::UrlEncode(this->Field_<#=parameter.name#> ? TEXT("true") : TEXT("false"))
+<#
+					}
+					else
+					{
+#>
+		, this->Field_<#=parameter.name#>
+<#
+					}
+				}
+			}
+			catch (Exception ex)
+			{
+				Console.Error.WriteLine("ERROR DURING QUERY STRING PARAMETER BUILDING:");
+				Console.Error.WriteLine(ex);
+			}
+		}
+	}
+#>
+		
+		));
+	HttpRequest->SetHeader(TEXT("api_key"), this->ApiKey);
+	HttpRequest->SetVerb(TEXT("<#=method.Name#>"));
+	HttpRequest->OnProcessRequestComplete().BindLambda([this](FHttpRequestPtr HttpRequest, FHttpResponsePtr HttpResponse, bool bSucceeded, TWeakObjectPtr<U<#=implName#>> SelfRef)
+	{
+		if (!SelfRef.IsValid())
+		{
+			UE_LOG_HIVE(Error, TEXT("[fail] <#=kv.Value.ApiName#> <#=path.Name#> <#=method.Name#>: Callback proxy is invalid (did the game shutdown?)"));
+			return;
+		}
+
+		if (!HttpResponse.IsValid())
+		{
+			struct FHiveApiError ResultError;
+			ResultError.HttpStatusCode = 0;
+			ResultError.ErrorCode = 0;
+			ResultError.Message = TEXT("HTTP response was not valid!");
+			ResultError.Parameter = TEXT("");
+			UE_LOG_HIVE(Error, TEXT("[fail] <#=kv.Value.ApiName#> <#=path.Name#> <#=method.Name#>: %s"), *(ResultError.Message));
+			OnFailure.Broadcast(<# if (!onlyError) { #> <#=defaultInitializer#>, <# } #>ResultError);
+			return;
+		}
+
+		auto Response = HttpResponse.Get();
+
+		UE_LOG_HIVE(Warning, TEXT("[info] <#=kv.Value.ApiName#> <#=path.Name#> <#=method.Name#>: %s"), *(Response->GetContentAsString()));
+
+		<#
+		if (resultType == "bool")
+		{
+		#>
+		if (Response->GetContentAsString().Equals(TEXT("true")))
+		{
+			struct FHiveApiError ResultError;
+			UE_LOG_HIVE(Warning, TEXT("[success] <#=kv.Value.ApiName#> <#=path.Name#> <#=method.Name#>"));
+			OnSuccess.Broadcast(true, ResultError);
+		}
+		else if (Response->GetContentAsString().Equals(TEXT("false")))
+		{
+			struct FHiveApiError ResultError;
+			UE_LOG_HIVE(Warning, TEXT("[success] <#=kv.Value.ApiName#> <#=path.Name#> <#=method.Name#>"));
+			OnSuccess.Broadcast(false, ResultError);
+		}
+		<#
+		}
+		#>
+
+		TSharedPtr<FJsonValue> JsonValue;
+		TSharedRef<TJsonReader<TCHAR>> Reader = TJsonReaderFactory<>::Create(Response->GetContentAsString());
+		if (!FJsonSerializer::Deserialize(Reader, JsonValue) || !JsonValue.IsValid())
+		{
+			struct FHiveApiError ResultError;
+			ResultError.HttpStatusCode = Response->GetResponseCode();
+			ResultError.ErrorCode = 0;
+			ResultError.Message = TEXT("Unable to deserialize JSON response!");
+			ResultError.Parameter = TEXT("");
+			UE_LOG_HIVE(Error, TEXT("[fail] <#=kv.Value.ApiName#> <#=path.Name#> <#=method.Name#>: %s"), *(ResultError.Message));
+			OnFailure.Broadcast(<# if (!onlyError) { #> <#=defaultInitializer#>, <# } #>ResultError);
+			return;
+		}
+		
+		if (!bSucceeded || HttpResponse->GetResponseCode() != 200)
+		{
+			const TSharedPtr<FJsonObject>* JsonObject;
+			if (JsonValue->TryGetObject(JsonObject))
+			{
+				// Parse as Hive system error.
+				FString Message, Parameter;
+				double ErrorCode;
+				auto GotMessage = (*JsonObject)->TryGetStringField(TEXT("message"), Message);
+				auto GotParameter = (*JsonObject)->TryGetStringField(TEXT("fields"), Parameter);
+				auto GotErrorCode = (*JsonObject)->TryGetNumberField(TEXT("code"), ErrorCode);
+
+				struct FHiveApiError ResultError;
+				ResultError.HttpStatusCode = Response->GetResponseCode();
+				if (GotErrorCode)
+				{
+					ResultError.ErrorCode = (int32)ErrorCode;
+				}
+				if (GotMessage)
+				{
+					ResultError.Message = Message;
+				}
+				if (GotParameter)
+				{
+					ResultError.Parameter = Parameter;
+				}
+				UE_LOG_HIVE(Error, TEXT("[fail] <#=kv.Value.ApiName#> <#=path.Name#> <#=method.Name#>: %s"), *(ResultError.Message));
+				OnFailure.Broadcast(<# if (!onlyError) { #> <#=defaultInitializer#>, <# } #>ResultError);
+				return;
+			}
+			else
+			{
+				struct FHiveApiError ResultError;
+				ResultError.HttpStatusCode = Response->GetResponseCode();
+				ResultError.ErrorCode = 0;
+				ResultError.Message = TEXT("Unable to deserialize JSON response as Hive system error!");
+				ResultError.Parameter = TEXT("");
+				UE_LOG_HIVE(Error, TEXT("[fail] <#=kv.Value.ApiName#> <#=path.Name#> <#=method.Name#>: %s"), *(ResultError.Message));
+				OnFailure.Broadcast(<# if (!onlyError) { #> <#=defaultInitializer#>, <# } #>ResultError);
+				return;
+			}
+		}
+
+		{
+			struct FHiveApiError ResultError;
+
+		<#
+		if (!onlyError)
+		{
+			if (!string.IsNullOrEmpty(deserializerName) && !deserializerName.StartsWith("array:"))
+			{
+		#>
+			const TSharedPtr<FJsonObject>* JsonObject;
+			if (JsonValue->TryGetObject(JsonObject))
+			{
+				auto Result = <#=deserializerName#>(*JsonObject);
+				UE_LOG_HIVE(Warning, TEXT("[success] <#=kv.Value.ApiName#> <#=path.Name#> <#=method.Name#>"));
+				OnSuccess.Broadcast(Result, ResultError);
+			}
+			else
+			{
+				ResultError.HttpStatusCode = Response->GetResponseCode();
+				ResultError.ErrorCode = 0;
+				ResultError.Message = TEXT("Unable to deserialize JSON response as expected type!");
+				ResultError.Parameter = TEXT("");
+				UE_LOG_HIVE(Error, TEXT("[fail] <#=kv.Value.ApiName#> <#=path.Name#> <#=method.Name#>: %s"), *(ResultError.Message));
+				OnFailure.Broadcast(<# if (!onlyError) { #> <#=defaultInitializer#>, <# } #>ResultError);
+				return;
+			}
+		<#
+			}
+			else if (!string.IsNullOrEmpty(deserializerName) && deserializerName.StartsWith("array:"))
+			{
+				var tDeserializerName = deserializerName.Substring("array:".Length);
+				if (tDeserializerName != null)
+				{
+		#>
+			const TArray<TSharedPtr<FJsonValue>>* JsonArray;
+			if (JsonValue->TryGetArray(JsonArray))
+			{
+				<#=resultType#> Result;
+				for (int i = 0; i < JsonArray->Num(); i++)
+				{
+					const TSharedPtr<FJsonObject>* JsonArrayObj;
+					if ((*JsonArray)[i]->TryGetObject(JsonArrayObj))
+					{
+						Result.Add(<#=tDeserializerName#>(*JsonArrayObj));
+					}
+
+				}
+				UE_LOG_HIVE(Warning, TEXT("[success] <#=kv.Value.ApiName#> <#=path.Name#> <#=method.Name#>"));
+				OnSuccess.Broadcast(Result, ResultError);
+			}
+			else
+			{
+				ResultError.HttpStatusCode = Response->GetResponseCode();
+				ResultError.ErrorCode = 0;
+				ResultError.Message = TEXT("Unable to deserialize JSON response as expected type!");
+				ResultError.Parameter = TEXT("");
+				UE_LOG_HIVE(Error, TEXT("[fail] <#=kv.Value.ApiName#> <#=path.Name#> <#=method.Name#>: %s"), *(ResultError.Message));
+				OnFailure.Broadcast(<# if (!onlyError) { #> <#=defaultInitializer#>, <# } #>ResultError);
+				return;
+			}
+		<#
+                }
+				else
+                {
+		#>
+			ResultError.HttpStatusCode = Response->GetResponseCode();
+			ResultError.ErrorCode = 0;
+			ResultError.Message = TEXT("No supported deserializer for this response");
+			ResultError.Parameter = TEXT("");
+			UE_LOG_HIVE(Error, TEXT("[fail] <#=kv.Value.ApiName#> <#=path.Name#> <#=method.Name#>: %s"), *(ResultError.Message));
+			OnFailure.Broadcast(<# if (!onlyError) { #> <#=defaultInitializer#>, <# } #>ResultError);
+			return;
+		<#
+                }
+			}
+			else if (resultType == "int32" || resultType == "int64" || resultType == "float" || resultType == "double")
+			{
+		#>
+			double Result;
+			if (JsonValue->TryGetNumber(Result))
+			{
+				UE_LOG_HIVE(Warning, TEXT("[success] <#=kv.Value.ApiName#> <#=path.Name#> <#=method.Name#>"));
+				OnSuccess.Broadcast(Result, ResultError);
+			}
+			else
+			{
+				ResultError.HttpStatusCode = Response->GetResponseCode();
+				ResultError.ErrorCode = 0;
+				ResultError.Message = TEXT("Unable to deserialize JSON response as expected type!");
+				ResultError.Parameter = TEXT("");
+				UE_LOG_HIVE(Error, TEXT("[fail] <#=kv.Value.ApiName#> <#=path.Name#> <#=method.Name#>: %s"), *(ResultError.Message));
+				OnFailure.Broadcast(<# if (!onlyError) { #> <#=defaultInitializer#>, <# } #>ResultError);
+				return;
+			}
+		<#
+			}
+			else if (resultType == "bool")
+			{
+		#>
+			bool Result;
+			if (JsonValue->TryGetBool(Result))
+			{
+				UE_LOG_HIVE(Warning, TEXT("[success] <#=kv.Value.ApiName#> <#=path.Name#> <#=method.Name#>"));
+				OnSuccess.Broadcast(Result, ResultError);
+			}
+			else
+			{
+				ResultError.HttpStatusCode = Response->GetResponseCode();
+				ResultError.ErrorCode = 0;
+				ResultError.Message = TEXT("Unable to deserialize JSON response as expected type!");
+				ResultError.Parameter = TEXT("");
+				UE_LOG_HIVE(Error, TEXT("[fail] <#=kv.Value.ApiName#> <#=path.Name#> <#=method.Name#>: %s"), *(ResultError.Message));
+				OnFailure.Broadcast(<# if (!onlyError) { #> <#=defaultInitializer#>, <# } #>ResultError);
+				return;
+			}
+		<#
+			}
+			else if (resultType.StartsWith("FString"))
+			{
+		#>
+			FString Result;
+			if (JsonValue->TryGetString(Result))
+			{
+				UE_LOG_HIVE(Warning, TEXT("[success] <#=kv.Value.ApiName#> <#=path.Name#> <#=method.Name#>"));
+				OnSuccess.Broadcast(Result, ResultError);
+			}
+			else
+			{
+				ResultError.HttpStatusCode = Response->GetResponseCode();
+				ResultError.ErrorCode = 0;
+				ResultError.Message = TEXT("Unable to deserialize JSON response as expected type!");
+				ResultError.Parameter = TEXT("");
+				UE_LOG_HIVE(Error, TEXT("[fail] <#=kv.Value.ApiName#> <#=path.Name#> <#=method.Name#>: %s"), *(ResultError.Message));
+				OnFailure.Broadcast(<# if (!onlyError) { #> <#=defaultInitializer#>, <# } #>ResultError);
+				return;
+			}
+		<#
+			}
+			else
+			{
+		#>
+			ResultError.HttpStatusCode = Response->GetResponseCode();
+			ResultError.ErrorCode = 0;
+			ResultError.Message = TEXT("No supported deserializer for this response");
+			ResultError.Parameter = TEXT("");
+			UE_LOG_HIVE(Error, TEXT("[fail] <#=kv.Value.ApiName#> <#=path.Name#> <#=method.Name#>: %s"), *(ResultError.Message));
+			OnFailure.Broadcast(<# if (!onlyError) { #> <#=defaultInitializer#>, <# } #>ResultError);
+			return;
+		<#
+			}
+		}
+		else
+		{
+		#>
+			UE_LOG_HIVE(Warning, TEXT("[success] <#=kv.Value.ApiName#> <#=path.Name#> <#=method.Name#>"));
+			OnSuccess.Broadcast(ResultError);
+		<#
+		}
+		#>
+		}
+	}, TWeakObjectPtr<U<#=implName#>>(this));
+	HttpRequest->ProcessRequest();
+}
+
+<#
+			}
+			catch (Exception ex)
+			{
+				Console.Error.WriteLine("ERROR DURING IMPLEMENTATIONS:");
+				Console.Error.WriteLine(ex);
+			}
+		}
+	}
+}
+#>
+
+<#+
+    public class WebEntry
+    {
+		public WebEntry(string apiName)
+		{
+			ApiName = apiName;
+		}
+
+		public string ApiName { get; set; }
+		public dynamic Api { get; set; }
+    }
+#>
