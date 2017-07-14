@@ -26,7 +26,7 @@ mv build416 OnlineSubsystemHive
 zip -r UE4.16-Plugin.zip OnlineSubsystemHive/
 rm -Rf OnlineSubsystemHive || true
 
-touch test.txt
+echo "test" > test.txt
 
 echo "Testing upload of new version works to ensure GitHub API is responding..."
 \$GITHUB_RELEASE upload --user HiveMP --repo UnrealEngine4-SDK --tag latest --name TestUpload --file test.txt
