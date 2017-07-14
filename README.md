@@ -7,16 +7,11 @@ This SDK makes all of Hive's APIs available as blueprints in Unreal Engine 4.
 
 ## Installation
 
-Clone this repository into `Plugins\OnlineSubsystemHive` in your Unreal Engine project such that `Plugins\OnlineSubsystemHive\OnlineSubsystemHive.uplugin` exists.
+Download the latest release from https://github.com/HiveMP/UnrealEngine4-SDK/releases/tag/latest for the version of Unreal Engine 4 that you are using in your project.
 
-If you are using Git, you can install this as a submodule with:
+Extract the ZIP file somewhere and place the `OnlineSubsystemHive` folder underneath the `Plugins` folder in your project. You may need to create it if it doesn't exist.
 
-```
-git submodule add https://github.com/HiveMP/UnrealEngine4-SDK
- Plugins/OnlineSubsystemHive
-```
-
-When you next open your project via the Unreal launcher, it may tell you it's out of date and needs to be rebuilt; you should say Yes to rebuild the project.
+When everything is setup, the file `<yourproject>\Plugins\OnlineSubsystemHive\OnlineSubsystemHive.uplugin` should exist. You can then open your project from the Epic Games launcher.
 
 ## Documentation
 
