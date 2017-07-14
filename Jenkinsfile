@@ -1,3 +1,6 @@
+properties([pipelineTriggers([upstream(
+  threshold: hudson.model.Result.SUCCESS,         
+  upstreamProjects: "HiveMP/hivemp")])])
 stage('Build') {
   node('windows') {
     dir('build416') {
