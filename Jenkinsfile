@@ -34,13 +34,13 @@ git init || true
 git remote add origin git@github.com:HiveMP/UnrealEngine4-SDK || true
 git push --delete origin latest || true
 
-#echo "Creating a new release on GitHub"
-#\$GITHUB_RELEASE release --user HiveMP --repo UnrealEngine4-SDK --tag latest --name "Latest Release (Build \$BUILD_ID)" --description "This is an automatic release created by the build server.  Please refer to the README in the repository on how to use the HiveMP SDK in your game."
+echo "Creating a new release on GitHub"
+\$GITHUB_RELEASE release --user HiveMP --repo UnrealEngine4-SDK --tag latest --name "Latest Release (Build \$BUILD_ID)" --description "This is an automatic release created by the build server.  Please refer to the README in the repository on how to use the HiveMP SDK in your game."
 
-#echo "Uploading 4.16 SDK to GitHub"
-#\$GITHUB_RELEASE upload --user HiveMP --repo UnrealEngine4-SDK --tag latest --name UE4.16-Plugin.zip --file UE4.16-Plugin.zip
+echo "Uploading 4.16 SDK to GitHub"
+\$GITHUB_RELEASE upload --user HiveMP --repo UnrealEngine4-SDK --tag latest --name UE4.16-Plugin.zip --file UE4.16-Plugin.zip
 
-#echo "Done!"
+echo "Done!"
 """)
     }
   }

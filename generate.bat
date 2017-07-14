@@ -3,6 +3,10 @@ cd %~dp0
 
 SET TT=""
 SET HASTT=false
+if exist "C:\Program Files (x86)\Microsoft Visual Studio\2017\Community\Common7\IDE\TextTransform.exe" (
+    SET TT="C:\Program Files (x86)\Microsoft Visual Studio\2017\Community\Common7\IDE\TextTransform.exe"
+    SET HASTT=true
+)
 if exist "C:\Program Files (x86)\Microsoft Visual Studio\2017\Enterprise\Common7\IDE\TextTransform.exe" (
     SET TT="C:\Program Files (x86)\Microsoft Visual Studio\2017\Enterprise\Common7\IDE\TextTransform.exe"
     SET HASTT=true
