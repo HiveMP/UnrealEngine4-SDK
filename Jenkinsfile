@@ -1,44 +1,44 @@
 stage('Build') {
   node('windows') {
-    dir('build') {
+    dir('build416') {
     }
     dir('src') {
       checkout scm
-      bat '"C:\\Program Files\\Epic Games\\UE_4.16\\Engine\\Build\\BatchFiles\\RunUAT.bat" BuildPlugin -Rocket -Plugin="%CD%\\OnlineSubsystemHive.uplugin" -Package="%CD%\\..\\build" -CreateSubFolder -TargetPlatforms=Win32+Win64+Linux'
+      bat '"C:\\Program Files\\Epic Games\\UE_4.16\\Engine\\Build\\BatchFiles\\RunUAT.bat" BuildPlugin -Rocket -Plugin="%CD%\\OnlineSubsystemHive.uplugin" -Package="%CD%\\..\\build416" -CreateSubFolder -TargetPlatforms=Win32+Win64+Linux'
     }
-    stash allowEmpty: true, includes: 'build/**', name: 'winbuild'
+    stash allowEmpty: true, includes: 'build416/**', name: 'winbuild416'
   }
 }
 stage('Publish') {
   node('linux') {
-    unstash 'winbuild'
-    withCredentials([string(credentialsId: 'github-user-token', variable: 'GITHUB_TOKEN')]) {
+    unstash 'winbuild416'
+    withCredentials([string(credentialsId: 'HiveMP-Deploy', variable: 'GITHUB_TOKEN')]) {
       sh("""
 #!/bin/bash
 set -e
 
-ls
+echo "Creating 4.16 version SDK..."
+rm -Rf OnlineSubsystemHive || true
+mv build416 OnlineSubsystemHive
+zip -r UE4.16-Plugin.zip OnlineSubsystemHive/
+rm -Rf OnlineSubsystemHive || true
 
-#echo "Testing upload of new version works to ensure GitHub API is responding..."
-#\$GITHUB_RELEASE upload --user Protobuild --repo Protobuild.Manager --tag latest --name ProtobuildLinuxInstall-TestUpload.sh --file artifacts/Installers/Linux/install.sh 
+touch test.txt
 
-#echo "Deleting release from GitHub before creating a new one"
-#\$GITHUB_RELEASE delete --user Protobuild --repo Protobuild.Manager --tag latest || true
-#git init || true
-#git remote add origin git@github.com:Protobuild/Protobuild.Manager || true
-#git push --delete origin latest || true
+echo "Testing upload of new version works to ensure GitHub API is responding..."
+\$GITHUB_RELEASE upload --user HiveMP --repo UnrealEngine4-SDK --tag latest --name TestUpload --file test.txt
+
+echo "Deleting release from GitHub before creating a new one"
+\$GITHUB_RELEASE delete --user HiveMP --repo UnrealEngine4-SDK --tag latest || true
+git init || true
+git remote add origin git@github.com:HiveMP/UnrealEngine4-SDK || true
+git push --delete origin latest || true
 
 #echo "Creating a new release on GitHub"
-#\$GITHUB_RELEASE release --user Protobuild --repo Protobuild.Manager --tag latest --name "Latest Release (Build \$BUILD_ID)" --description "This is an automatic release created by the build server.  Please refer to the README in the repository on how to install Protobuild Manager."
+#\$GITHUB_RELEASE release --user HiveMP --repo UnrealEngine4-SDK --tag latest --name "Latest Release (Build \$BUILD_ID)" --description "This is an automatic release created by the build server.  Please refer to the README in the repository on how to use the HiveMP SDK in your game."
 
-#echo "Uploading Linux installer to GitHub"
-#\$GITHUB_RELEASE upload --user Protobuild --repo Protobuild.Manager --tag latest --name ProtobuildLinuxInstall.sh --file artifacts/Installers/Linux/install.sh 
-
-#echo "Uploading MacOS installer to GitHub"
-#\$GITHUB_RELEASE upload --user Protobuild --repo Protobuild.Manager --tag latest --name ProtobuildMacOSInstall.sh --file artifacts/Installers/MacOS/install.sh 
-
-#echo "Uploading Windows installer to GitHub"
-#\$GITHUB_RELEASE upload --user Protobuild --repo Protobuild.Manager --tag latest --name ProtobuildWindowsInstall.exe --file artifacts/Installers/Windows/ProtobuildWebInstall.exe
+#echo "Uploading 4.16 SDK to GitHub"
+#\$GITHUB_RELEASE upload --user HiveMP --repo UnrealEngine4-SDK --tag latest --name UE4.16-Plugin.zip --file UE4.16-Plugin.zip
 
 #echo "Done!"
 """)
