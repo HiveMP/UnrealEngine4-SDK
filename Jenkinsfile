@@ -8,6 +8,7 @@ stage('Build') {
     dir('src') {
       checkout scm
       bat '"C:\\Program Files\\Epic Games\\UE_4.16\\Engine\\Build\\BatchFiles\\RunUAT.bat" BuildPlugin -Rocket -Plugin="%CD%\\OnlineSubsystemHive.uplugin" -Package="%CD%\\..\\build416" -CreateSubFolder -TargetPlatforms=Win32+Win64+Linux'
+      bat 'xcopy /C /F /R generate.bat ..\\build416\\generate.bat'
     }
     stash allowEmpty: true, includes: 'build416/**', name: 'winbuild416'
   }
