@@ -13,11 +13,12 @@ stage('Build') {
     stash allowEmpty: true, includes: 'build416/**', name: 'winbuild416'
   }
 }
-stage('Publish') {
-  node('linux') {
-    unstash 'winbuild416'
-    withCredentials([string(credentialsId: 'HiveMP-Deploy', variable: 'GITHUB_TOKEN')]) {
-      sh("""
+if (env.BRANCH_NAME == 'master') {
+  stage('Publish') {
+    node('linux') {
+      unstash 'winbuild416'
+      withCredentials([string(credentialsId: 'HiveMP-Deploy', variable: 'GITHUB_TOKEN')]) {
+        sh("""
 #!/bin/bash
 set -e
 
@@ -46,6 +47,7 @@ echo "Uploading 4.16 SDK to GitHub"
 
 echo "Done!"
 """)
+      }
     }
   }
 }
