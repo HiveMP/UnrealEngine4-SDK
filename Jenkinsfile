@@ -7,9 +7,8 @@ stage('Build') {
     }
     dir('src') {
       checkout scm
-      bat '"C:\\Program Files\\Epic Games\\UE_4.16\\Engine\\Build\\BatchFiles\\RunUAT.bat" BuildPlugin -Rocket -Plugin="%CD%\\OnlineSubsystemHive.uplugin" -Package="%CD%\\..\\build416" -CreateSubFolder -TargetPlatforms=Win32+Win64+Linux'
-      bat 'echo f | xcopy /C /F /R /Y generate.bat ..\\build416\\generate.bat'
-      bat 'xcopy /I /C /F /R /Y /S Newtonsoft.Json ..\\build416\\Newtonsoft.Json'
+      bat 'git submodule update --init --recursive'
+      powershell '.\\Build-Windows.ps1'
     }
     stash allowEmpty: true, includes: 'build416/**', name: 'winbuild416'
   }
