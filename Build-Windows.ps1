@@ -37,4 +37,16 @@ Copy-Item -Force -Recurse .\SDK-Generator\dist\UnrealEngine-4.16\*.cpp Source\Pu
 if (Test-Path ..\build416\SDK-Generator) {
     Remove-Item -Recurse -Force ..\build416\SDK-Generator
 }
+if (Test-Path ..\build416\.gitignore) {
+    Remove-Item -Recurse -Force ..\build416\.gitignore
+}
+if (Test-Path ..\build416\.gitmodules) {
+    Remove-Item -Recurse -Force ..\build416\.gitmodules
+}
+if (Test-Path ..\build416\Build-Windows.ps1) {
+    Remove-Item -Recurse -Force ..\build416\Build-Windows.ps1
+}
+if (Test-Path ..\build416\Jenkinsfile) {
+    Remove-Item -Recurse -Force ..\build416\Jenkinsfile
+}
 if ($LastExitCode -ne 0) { throw "Unreal Engine didn't build successfully" }
