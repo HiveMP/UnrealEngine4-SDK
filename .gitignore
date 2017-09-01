@@ -1,3 +1,5 @@
 /*.json
 Binaries/
 Intermediate/
+/Source/Public/HiveBlueprintLibrary.h
+/Source/Public/HiveBlueprintLibraryImpl.cpp
