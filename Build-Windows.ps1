@@ -11,6 +11,10 @@ trap
 Push-Location .\SDK-Generator
 try
 {
+    git fetch --all
+    if ($LastExitCode -ne 0) { throw "git fetch didn't run successfully" }
+    git checkout origin/master
+    if ($LastExitCode -ne 0) { throw "git checkout didn't run successfully" }
     yarn
     if ($LastExitCode -ne 0) { throw "yarn didn't run successfully" }
     yarn run generator -- generate UnrealEngine-4.16 dist/UnrealEngine-4.16
