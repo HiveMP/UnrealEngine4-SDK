@@ -14,10 +14,5 @@
       "Type": "Runtime",
       "LoadingPhase": "Default"
     }
-  ],
-  "PreBuildSteps": {
-    "Win64": [
-      "\"$(ProjectDir)\\Plugins\\OnlineSubsystemHive\\generate.bat\""
-    ]
-  }
+  ]
 }
